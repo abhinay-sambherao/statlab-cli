@@ -1,0 +1,432 @@
+#!/usr/bin/env python3
+"""
+StatLab AI – Command Line Interface
+====================================
+Run statistical analyses on large datasets directly from the terminal.
+No file size limits, no browser uploads — pure terminal power.
+
+Usage:
+    ./statlab upload data.csv
+    ./statlab describe data.csv --columns col1 col2
+    ./statlab ttest data.csv --group1 male --group2 female --value score
+    ./statlab anova data.csv --dv value --factor group
+    ./statlab regression data.csv --dv price --predictors size rooms
+    ./statlab kmeans data.csv --clusters 3 --columns col1 col2
+    ./statlab pca data.csv
+    ./statlab monte-carlo --simulations 10000
+    ./statlab report results.json --format html
+    ./statlab batch config.json
+"""
+
+import argparse
+import json
+import sys
+import os
+from pathlib import Path
+from typing import List, Optional
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import pandas as pd
+import numpy as np
+
+
+def load_data(path: str) -> pd.DataFrame:
+    ext = Path(path).suffix.lower()
+    if not Path(path).exists():
+        print(f"Error: File not found: {path}")
+        sys.exit(1)
+
+    size_mb = Path(path).stat().st_size / (1024 * 1024)
+    print(f"Loading: {path} ({size_mb:.1f} MB)")
+
+    if ext == ".csv":
+        df = pd.read_csv(path, low_memory=False)
+    elif ext == ".tsv":
+        df = pd.read_csv(path, sep="\t", low_memory=False)
+    elif ext in (".xlsx", ".xls"):
+        df = pd.read_excel(path)
+    elif ext == ".json":
+        df = pd.read_json(path)
+    elif ext == ".parquet":
+        df = pd.read_parquet(path)
+    elif ext == ".feather":
+        df = pd.read_feather(path)
+    else:
+        print(f"Unsupported format: {ext}")
+        print("   Supported: .csv, .tsv, .xlsx, .json, .parquet, .feather")
+        sys.exit(1)
+
+    print(f"Loaded: {len(df):,} rows x {len(df.columns)} columns")
+    return df
+
+
+def cmd_upload(args):
+    df = load_data(args.file)
+    print(f"\nPreview (first 5 rows):")
+    print(df.head().to_string())
+    print(f"\nColumns:")
+    for col in df.columns:
+        dtype = df[col].dtype
+        missing = df[col].isna().sum()
+        print(f"   {col:30s} {str(dtype):10s} missing={missing}")
+
+
+def cmd_describe(args):
+    df = load_data(args.file)
+    cols = args.columns or df.select_dtypes(include=[np.number]).columns.tolist()
+    if args.json:
+        from statistical.descriptive import DescriptiveStats
+        result = DescriptiveStats.compute(df, columns=cols)
+        print(json.dumps(result, indent=2, default=str))
+    else:
+        print("\nDescriptive Statistics")
+        print("=" * 70)
+        desc = df[cols].describe().to_string()
+        print(desc)
+
+
+def cmd_normality(args):
+    df = load_data(args.file)
+    from statistical.normality import NormalityTests
+    result = NormalityTests.all_tests(df[args.column])
+    print(f"\n{'='*50}")
+    print(f"  Normality Tests: {args.column}")
+    print(f"{'='*50}")
+    for test_name, test_result in result.get('results', {}).items():
+        if isinstance(test_result, dict):
+            stat = test_result.get('statistic', 0)
+            p = test_result.get('p_value', 0)
+            sig = "NON-NORMAL" if test_result.get('significant') else "normal"
+            print(f"  {test_name:25s}  stat={stat:.4f}  p={p:.4f}  ({sig})")
+
+
+def cmd_ttest(args):
+    df = load_data(args.file)
+    from statistical.hypothesis import HypothesisTests
+    if args.paired:
+        result = HypothesisTests.paired_t(df[args.group1], df[args.group2])
+    else:
+        result = HypothesisTests.independent_t(df[args.group1], df[args.group2])
+    print(f"\n{'='*50}")
+    print(f"  {result['test']}")
+    print(f"{'='*50}")
+    print(f"  t-statistic:  {result['statistic']:.6f}")
+    print(f"  p-value:      {result['p_value']:.6f}")
+    print(f"  significant:  {'Yes' if result.get('significant') else 'No'}")
+    if 'cohens_d' in result:
+        print(f"  Cohen's d:    {result['cohens_d']:.4f}")
+    print(f"\n  {result.get('interpretation', '')}")
+
+
+def cmd_anova(args):
+    df = load_data(args.file)
+    from statistical.anova import ANOVA
+    result = ANOVA.one_way(df, args.dv, args.factor)
+    print(f"\n{'='*50}")
+    print(f"  {result['test']}")
+    print(f"{'='*50}")
+    print(f"  F-statistic:  {result['f_statistic']:.6f}")
+    print(f"  p-value:      {result['p_value']:.6f}")
+    print(f"  eta-squared:  {result.get('eta_squared', 0):.4f}")
+    print(f"  significant:  {'Yes' if result.get('significant') else 'No'}")
+    print(f"\n  Group means:")
+    for name, mean in result.get('group_means', {}).items():
+        print(f"    {name}: {mean:.4f}")
+
+
+def cmd_regression(args):
+    df = load_data(args.file)
+    from statistical.regression import Regression
+    predictors = args.predictors or df.select_dtypes(include=[np.number]).columns.tolist()[:3]
+    if args.dv in predictors:
+        predictors.remove(args.dv)
+    result = Regression.linear(df, args.dv, predictors)
+    print(f"\n{'='*50}")
+    print(f"  {result['test']}")
+    print(f"{'='*50}")
+    print(f"  R-squared:    {result['r_squared']:.6f}")
+    print(f"  Adj. R-sq:    {result['adj_r_squared']:.6f}")
+    print(f"  RMSE:         {result['rmse']:.6f}")
+    print(f"  F-stat:       {result.get('f_statistic', 0):.4f}")
+    print(f"\n  Coefficients:")
+    for c in result.get('coefficients', []):
+        sig = "***" if c.get('significant') else ""
+        print(f"    {c['variable']:25s} {c['coefficient']:10.6f}  p={c.get('p_value', 0):.4f} {sig}")
+
+
+def cmd_kmeans(args):
+    df = load_data(args.file)
+    from statistical.machine_learning import MachineLearning
+    result = MachineLearning.kmeans(df, n_clusters=args.clusters, columns=args.columns)
+    print(f"\n{'='*50}")
+    print(f"  {result['test']}")
+    print(f"{'='*50}")
+    print(f"  Clusters:     {result['n_clusters']}")
+    print(f"  Silhouette:   {result['silhouette_score']:.4f}")
+    print(f"  Inertia:      {result['inertia']:.2f}")
+    print(f"\n  Cluster sizes:")
+    for k, v in result.get('cluster_sizes', {}).items():
+        print(f"    Cluster {k}: {v} samples")
+
+
+def cmd_pca(args):
+    df = load_data(args.file)
+    from statistical.advanced import AdvancedAnalysis
+    result = AdvancedAnalysis.pca(df, n_components=args.components)
+    print(f"\n{'='*50}")
+    print(f"  {result['test']}")
+    print(f"{'='*50}")
+    print(f"  Components:   {result['n_components']}")
+    print(f"  Total Var:    {result['total_variance_explained']:.4f}")
+    print(f"\n  Variance explained:")
+    for i, ev in enumerate(result.get('explained_variance_ratio', [])):
+        cum = sum(result['explained_variance_ratio'][:i+1])
+        print(f"    PC{i+1}: {ev:.4f} ({ev*100:.1f}%) [cumulative: {cum*100:.1f}%]")
+
+
+def cmd_monte_carlo(args):
+    from statistical.simulation import Simulation
+    result = Simulation.monte_carlo(
+        n_simulations=args.simulations,
+        n_samples=args.samples,
+        distribution=args.distribution,
+    )
+    print(f"\n{'='*50}")
+    print(f"  {result['test']}")
+    print(f"{'='*50}")
+    print(f"  Mean of means: {result['mean_of_means']:.6f}")
+    print(f"  SE of means:   {result['std_of_means']:.6f}")
+    print(f"  95% CI:        [{result['percentiles']['2.5']:.4f}, {result['percentiles']['97.5']:.4f}]")
+
+
+def cmd_correlation(args):
+    df = load_data(args.file)
+    from statistical.correlation import Correlation
+    cols = args.columns or df.select_dtypes(include=[np.number]).columns.tolist()
+    method = args.method or 'pearson'
+    result = Correlation.matrix(df, columns=cols, method=method)
+    print(f"\n{'='*50}")
+    print(f"  Correlation Matrix ({method})")
+    print(f"{'='*50}")
+    import pandas as pd
+    matrix = result.get('correlation_matrix', {})
+    if matrix:
+        corr_df = pd.DataFrame(matrix)
+        print(corr_df.to_string())
+
+
+def cmd_report(args):
+    with open(args.file) as f:
+        results = json.load(f)
+    from utils.report_generator import ReportGenerator
+    if isinstance(results, dict):
+        results = [results]
+    if args.format == "html":
+        html = ReportGenerator.generate_html(results)
+        output = args.output or "statlab_report.html"
+        with open(output, "w") as f:
+            f.write(html)
+        print(f"Report saved: {output}")
+    elif args.format == "pdf":
+        html = ReportGenerator.generate_html(results)
+        pdf = ReportGenerator.generate_pdf(html)
+        output = args.output or "statlab_report.pdf"
+        with open(output, "wb") as f:
+            f.write(pdf)
+        print(f"Report saved: {output}")
+    else:
+        print("Formats: html, pdf")
+
+
+def cmd_batch(args):
+    with open(args.config) as f:
+        config = json.load(f)
+    df = load_data(config["file"])
+    results = {}
+
+    for analysis in config.get("analyses", []):
+        atype = analysis["type"]
+        params = analysis.get("params", {})
+        print(f"\nRunning: {atype}...")
+
+        try:
+            if atype == "descriptive":
+                from statistical.descriptive import DescriptiveStats
+                results[atype] = DescriptiveStats.compute(df, **params)
+            elif atype == "ttest":
+                from statistical.hypothesis import HypothesisTests
+                results[atype] = HypothesisTests.independent_t(df[params["col1"]], df[params["col2"]])
+            elif atype == "anova":
+                from statistical.anova import ANOVA
+                results[atype] = ANOVA.one_way(df, params["dv"], params["factor"])
+            elif atype == "regression":
+                from statistical.regression import Regression
+                results[atype] = Regression.linear(df, params["dv"], params["predictors"])
+            elif atype == "kmeans":
+                from statistical.machine_learning import MachineLearning
+                results[atype] = MachineLearning.kmeans(df, **params)
+            elif atype == "pca":
+                from statistical.advanced import AdvancedAnalysis
+                results[atype] = AdvancedAnalysis.pca(df, **params)
+            else:
+                print(f"  Unknown analysis: {atype}")
+                continue
+            print(f"  Complete")
+        except Exception as e:
+            print(f"  Failed: {e}")
+
+    output = args.output or "batch_results.json"
+    with open(output, "w") as f:
+        json.dump(results, f, indent=2, default=str)
+    print(f"\nBatch results saved: {output}")
+
+
+def cmd_list(args):
+    print("""
+StatLab AI - Available Analyses
+
+DESCRIPTIVE STATISTICS
+   ./statlab describe <file> [--columns col1 col2]
+
+NORMALITY TESTS
+   ./statlab normality <file> --column col
+
+HYPOTHESIS TESTS
+   ./statlab ttest <file> --group1 col_a --group2 col_b [--paired]
+
+CORRELATION
+   ./statlab correlation <file> [--columns col1 col2] [--method pearson]
+
+ANOVA
+   ./statlab anova <file> --dv numeric --factor categorical
+
+REGRESSION
+   ./statlab regression <file> --dv target --predictors x1 x2
+
+MACHINE LEARNING
+   ./statlab kmeans <file> --clusters 3 [--columns col1 col2]
+   ./statlab pca <file> [--components 2]
+
+SIMULATION
+   ./statlab monte-carlo --simulations 10000 --distribution normal
+
+REPORT GENERATION
+   ./statlab report results.json --format html
+
+BATCH PROCESSING
+   ./statlab batch config.json
+
+QUICK REFERENCE
+   ./statlab list                    Show this help
+   ./statlab upload <file>           Preview a dataset
+   ./statlab describe <file> --json  Output JSON for piping
+
+TIP: For large datasets, pipe JSON output:
+   ./statlab describe data.csv --json | ./statlab report - --format html
+""")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="StatLab AI - CLI for large dataset statistical analysis",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  ./statlab upload data.csv
+  ./statlab describe large_dataset.csv --columns revenue users --json
+  ./statlab ttest experiment.csv --group1 control --group2 treatment --value score
+  ./statlab regression sales.csv --dv revenue --predictors marketing spend
+  ./statlab kmeans customers.csv --clusters 5
+  ./statlab monte-carlo --simulations 50000
+  ./statlab batch my_analysis_config.json
+  ./statlab list
+        """
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Analysis command")
+
+    p_upload = subparsers.add_parser("upload", help="Upload and preview a dataset")
+    p_upload.add_argument("file", help="Path to dataset file")
+
+    p_desc = subparsers.add_parser("describe", help="Descriptive statistics")
+    p_desc.add_argument("file", help="Path to dataset file")
+    p_desc.add_argument("--columns", nargs="*", help="Columns to analyze")
+    p_desc.add_argument("--json", action="store_true", help="Output as JSON")
+
+    p_norm = subparsers.add_parser("normality", help="Normality tests")
+    p_norm.add_argument("file", help="Path to dataset file")
+    p_norm.add_argument("--column", required=True, help="Column to test")
+
+    p_corr = subparsers.add_parser("correlation", help="Correlation analysis")
+    p_corr.add_argument("file", help="Path to dataset file")
+    p_corr.add_argument("--columns", nargs="*", help="Columns to analyze")
+    p_corr.add_argument("--method", default="pearson", choices=["pearson", "spearman", "kendall"], help="Correlation method")
+
+    p_ttest = subparsers.add_parser("ttest", help="Independent or paired t-test")
+    p_ttest.add_argument("file", help="Path to dataset file")
+    p_ttest.add_argument("--group1", required=True, help="First group column")
+    p_ttest.add_argument("--group2", required=True, help="Second group column")
+    p_ttest.add_argument("--paired", action="store_true", help="Paired t-test")
+    p_ttest.add_argument("--value", help="Value column (for paired tests)")
+
+    p_anova = subparsers.add_parser("anova", help="One-way ANOVA")
+    p_anova.add_argument("file", help="Path to dataset file")
+    p_anova.add_argument("--dv", required=True, help="Dependent variable column")
+    p_anova.add_argument("--factor", required=True, help="Factor/categorical column")
+
+    p_reg = subparsers.add_parser("regression", help="Linear regression")
+    p_reg.add_argument("file", help="Path to dataset file")
+    p_reg.add_argument("--dv", required=True, help="Dependent variable")
+    p_reg.add_argument("--predictors", nargs="*", help="Predictor columns")
+
+    p_km = subparsers.add_parser("kmeans", help="K-Means clustering")
+    p_km.add_argument("file", help="Path to dataset file")
+    p_km.add_argument("--clusters", type=int, default=3, help="Number of clusters")
+    p_km.add_argument("--columns", nargs="*", help="Columns to use")
+
+    p_pca = subparsers.add_parser("pca", help="Principal Component Analysis")
+    p_pca.add_argument("file", help="Path to dataset file")
+    p_pca.add_argument("--components", type=int, default=None, help="Number of components")
+
+    p_mc = subparsers.add_parser("monte-carlo", help="Monte Carlo simulation")
+    p_mc.add_argument("--simulations", type=int, default=10000, help="Number of simulations")
+    p_mc.add_argument("--samples", type=int, default=30, help="Samples per simulation")
+    p_mc.add_argument("--distribution", default="normal", choices=["normal", "uniform", "exponential", "binomial", "poisson"])
+
+    p_rpt = subparsers.add_parser("report", help="Generate report from JSON")
+    p_rpt.add_argument("file", help="JSON results file")
+    p_rpt.add_argument("--format", default="html", choices=["html", "pdf"], help="Output format")
+    p_rpt.add_argument("--output", "-o", help="Output filename")
+
+    p_batch = subparsers.add_parser("batch", help="Batch analysis from config")
+    p_batch.add_argument("config", help="JSON config file")
+    p_batch.add_argument("--output", "-o", default="batch_results.json", help="Output file")
+
+    subparsers.add_parser("list", help="List all analyses and usage")
+
+    args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        sys.exit(1)
+
+    commands = {
+        "upload": cmd_upload,
+        "describe": cmd_describe,
+        "normality": cmd_normality,
+        "correlation": cmd_correlation,
+        "ttest": cmd_ttest,
+        "anova": cmd_anova,
+        "regression": cmd_regression,
+        "kmeans": cmd_kmeans,
+        "pca": cmd_pca,
+        "monte-carlo": cmd_monte_carlo,
+        "report": cmd_report,
+        "batch": cmd_batch,
+        "list": cmd_list,
+    }
+
+    commands[args.command](args)
+
+
+if __name__ == "__main__":
+    main()
