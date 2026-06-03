@@ -342,6 +342,8 @@ class HypothesisTests:
         series = data.dropna()
         if series.nunique() > 2:
             return {"error": "Proportion z-test requires binary data"}
+        if series.nunique() < 2:
+            return {"error": "Proportion z-test requires at least two distinct values in data"}
 
         unique_vals = series.unique()
         success_val = unique_vals[0]
@@ -421,6 +423,8 @@ class HypothesisTests:
         s1, s2 = data1.dropna(), data2.dropna()
         if s1.nunique() > 2 or s2.nunique() > 2:
             return {"error": "Two-proportion z-test requires binary data in both groups"}
+        if s1.nunique() < 2 or s2.nunique() < 2:
+            return {"error": "Two-proportion z-test requires at least two distinct values in each group"}
 
         n1, n2 = len(s1), len(s2)
         x1 = int((s1 == s1.unique()[0]).sum())
@@ -536,19 +540,20 @@ class HypothesisTests:
 
         plots = {}
         if HAS_PLOTLY:
+            colors = px.colors.qualitative.Plotly
             row_labels = [str(i) for i in range(observed_array.shape[0])]
             col_labels = [str(j) for j in range(observed_array.shape[1])]
             fig_obs = go.Figure()
             for i in range(observed_array.shape[0]):
                 fig_obs.add_trace(go.Bar(name=f"Observed: Row {i}", x=col_labels, y=observed_array[i],
-                                          marker_color=px.colors.qualitative.Plotly[i]))
+                                          marker_color=colors[i % len(colors)]))
             fig_obs.update_layout(title="Chi-Square: Observed Frequencies", xaxis_title="Column", yaxis_title="Frequency", barmode="group")
             plots["observed_bar"] = _plot_to_dict(fig_obs)
 
             fig_exp = go.Figure()
             for i in range(expected.shape[0]):
                 fig_exp.add_trace(go.Bar(name=f"Expected: Row {i}", x=col_labels, y=expected[i],
-                                          marker_color=px.colors.qualitative.Plotly[i], marker_pattern_shape="/"))
+                                          marker_color=colors[i % len(colors)], marker_pattern_shape="/"))
             fig_exp.update_layout(title="Chi-Square: Expected Frequencies (Under Independence)",
                                   xaxis_title="Column", yaxis_title="Frequency", barmode="group")
             plots["expected_bar"] = _plot_to_dict(fig_exp)
@@ -598,6 +603,8 @@ class HypothesisTests:
         series = data.dropna()
         if series.nunique() > 2:
             return {"error": "Binomial test requires binary data"}
+        if series.nunique() < 2:
+            return {"error": "Binomial test requires at least two distinct values in data"}
         unique_vals = series.unique()
         success = unique_vals[0]
         k = int((series == success).sum())
