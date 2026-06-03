@@ -282,6 +282,133 @@ def cmd_batch(args):
     print(f"\nBatch results saved: {output}")
 
 
+def print_results_table(result: dict):
+    print(f"\n{'='*60}")
+    print(f"  {result.get('test', 'Results')}")
+    print(f"{'='*60}")
+
+    print(f"\n  H₀:  {result.get('h0', '—')}")
+    print(f"  Hₐ:  {result.get('ha', '—')}")
+    print(f"  α:   0.05")
+    print(f"\n  Statistic:  {result.get('statistic_name', '?')} = {result.get('statistic', 0):.6f}")
+    print(f"  p-value:    {result.get('p_value', 0):.6f}")
+    print(f"  Decision:   {result.get('decision', '—')}")
+
+    n = result.get('n')
+    n1 = result.get('n1')
+    n2 = result.get('n2')
+    if n:
+        print(f"  n:          {n}")
+    if n1 and n2:
+        print(f"  n₁:         {n1}")
+        print(f"  n₂:         {n2}")
+
+    mean = result.get('sample_mean')
+    mean1 = result.get('sample_mean_1')
+    mean2 = result.get('sample_mean_2')
+    phat = result.get('sample_proportion')
+    phat1 = result.get('sample_proportion_1')
+    phat2 = result.get('sample_proportion_2')
+    if mean is not None:
+        print(f"  Mean:       {mean:.4f}")
+        print(f"  Mean diff:  {result.get('mean_difference', 0):.4f}")
+    if mean1 is not None and mean2 is not None:
+        print(f"  Mean₁:      {mean1:.4f}")
+        print(f"  Mean₂:      {mean2:.4f}")
+        print(f"  Mean diff:  {result.get('mean_difference', 0):.4f}")
+    if phat is not None:
+        print(f"  Proportion: {phat:.4f}")
+    if phat1 is not None and phat2 is not None:
+        print(f"  Prop₁:      {phat1:.4f}")
+        print(f"  Prop₂:      {phat2:.4f}")
+        print(f"  Prop diff:  {result.get('proportion_difference', 0):.4f}")
+
+    if 'effect_size' in result:
+        print(f"  Effect sz:  {result['effect_size']:.4f}")
+    if 'cramers_v' in result:
+        print(f"  Cramér's V: {result['cramers_v']:.4f}")
+
+    print(f"\n  {'─'*56}")
+    print(f"  Conclusion:")
+    print(f"  {result.get('conclusion', '')}")
+
+    print(f"\n  {'─'*56}")
+    print(f"  Assumption Checks:")
+    for key, val in result.get('assumptions', {}).items():
+        print(f"    • {key.replace('_', ' ').title()}: {val}")
+
+
+def cmd_ztests(args):
+    df = load_data(args.file)
+    from statistical.hypothesis import HypothesisTests
+
+    alt = args.alternative or "two-sided"
+
+    if args.type == "one_sample":
+        col = args.column
+        if not col:
+            print("Error: --column required for one_sample z-test")
+            sys.exit(1)
+        result = HypothesisTests.one_sample_z(df[col], mu=args.mu, sigma=args.sigma, alternative=alt)
+    elif args.type == "two_sample":
+        g1, g2 = args.group1, args.group2
+        if not g1 or not g2:
+            print("Error: --group1 and --group2 required for two_sample z-test")
+            sys.exit(1)
+        result = HypothesisTests.two_sample_z(df[g1], df[g2], sigma1=args.sigma1, sigma2=args.sigma2, alternative=alt)
+    elif args.type == "one_proportion":
+        col = args.column
+        if not col:
+            print("Error: --column required for one_proportion z-test")
+            sys.exit(1)
+        result = HypothesisTests.one_proportion_z(df[col], p0=args.p0, alternative=alt)
+    elif args.type == "two_proportion":
+        g1, g2 = args.group1, args.group2
+        if not g1 or not g2:
+            print("Error: --group1 and --group2 required for two_proportion z-test")
+            sys.exit(1)
+        result = HypothesisTests.two_proportion_z(df[g1], df[g2], alternative=alt)
+    else:
+        print(f"Unknown z-test type: {args.type}")
+        sys.exit(1)
+
+    print_results_table(result)
+
+    if args.plot and result.get('plots'):
+        import plotly.graph_objects as go
+        import os
+        os.makedirs(args.plot, exist_ok=True)
+        for name, fig_dict in result['plots'].items():
+            fig = go.Figure(fig_dict)
+            path = os.path.join(args.plot, f"{args.type}_{name}.png")
+            fig.write_image(path, scale=2, width=800, height=500)
+            print(f"  Plot saved: {path}")
+
+
+def cmd_chisquare(args):
+    df = load_data(args.file)
+    from statistical.hypothesis import HypothesisTests
+    from scipy.stats import chi2_contingency
+
+    ct = pd.crosstab(df[args.col1], df[args.col2])
+    print(f"\nContingency Table:")
+    print(ct.to_string())
+    print()
+
+    result = HypothesisTests.chi_square(ct)
+    print_results_table(result)
+
+    if args.plot and result.get('plots'):
+        import plotly.graph_objects as go
+        import os
+        os.makedirs(args.plot, exist_ok=True)
+        for name, fig_dict in result['plots'].items():
+            fig = go.Figure(fig_dict)
+            path = os.path.join(args.plot, f"chisquare_{name}.png")
+            fig.write_image(path, scale=2, width=800, height=500)
+            print(f"  Plot saved: {path}")
+
+
 def cmd_list(args):
     print("""
 StatLab AI - Available Analyses
@@ -294,6 +421,11 @@ NORMALITY TESTS
 
 HYPOTHESIS TESTS
    ./statlab ttest <file> --group1 col_a --group2 col_b [--paired]
+   ./statlab ztests <file> --type one_sample --column col [--mu 0] [--sigma known_sd]
+   ./statlab ztests <file> --type two_sample --group1 col_a --group2 col_b
+   ./statlab ztests <file> --type one_proportion --column col [--p0 0.5]
+   ./statlab ztests <file> --type two_proportion --group1 col_a --group2 col_b
+   ./statlab chisquare <file> --col1 cat_col --col2 cat_col
 
 CORRELATION
    ./statlab correlation <file> [--columns col1 col2] [--method pearson]
@@ -398,6 +530,26 @@ Examples:
     p_rpt.add_argument("--format", default="html", choices=["html", "pdf"], help="Output format")
     p_rpt.add_argument("--output", "-o", help="Output filename")
 
+    p_zt = subparsers.add_parser("ztests", help="Z-tests (one-sample, two-sample, proportions)")
+    p_zt.add_argument("file", help="Path to dataset file")
+    p_zt.add_argument("--type", required=True, choices=["one_sample", "two_sample", "one_proportion", "two_proportion"], help="Type of z-test")
+    p_zt.add_argument("--column", help="Column for one-sample or one-proportion tests")
+    p_zt.add_argument("--group1", help="First group column (two-sample tests)")
+    p_zt.add_argument("--group2", help="Second group column (two-sample tests)")
+    p_zt.add_argument("--mu", type=float, default=0, help="Hypothesized mean (one_sample)")
+    p_zt.add_argument("--p0", type=float, default=0.5, help="Hypothesized proportion (one_proportion)")
+    p_zt.add_argument("--sigma", type=float, default=None, help="Population SD (one_sample)")
+    p_zt.add_argument("--sigma1", type=float, default=None, help="Population SD group 1 (two_sample)")
+    p_zt.add_argument("--sigma2", type=float, default=None, help="Population SD group 2 (two_sample)")
+    p_zt.add_argument("--alternative", choices=["two-sided", "greater", "less"], default="two-sided", help="Alternative hypothesis")
+    p_zt.add_argument("--plot", help="Save plot files to this directory", default=None)
+
+    p_cs = subparsers.add_parser("chisquare", help="Chi-square test of independence")
+    p_cs.add_argument("file", help="Path to dataset file")
+    p_cs.add_argument("--col1", required=True, help="First categorical column")
+    p_cs.add_argument("--col2", required=True, help="Second categorical column")
+    p_cs.add_argument("--plot", help="Save plot files to this directory", default=None)
+
     p_batch = subparsers.add_parser("batch", help="Batch analysis from config")
     p_batch.add_argument("config", help="JSON config file")
     p_batch.add_argument("--output", "-o", default="batch_results.json", help="Output file")
@@ -420,6 +572,8 @@ Examples:
         "kmeans": cmd_kmeans,
         "pca": cmd_pca,
         "monte-carlo": cmd_monte_carlo,
+        "ztests": cmd_ztests,
+        "chisquare": cmd_chisquare,
         "report": cmd_report,
         "batch": cmd_batch,
         "list": cmd_list,
