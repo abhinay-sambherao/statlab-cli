@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
   <img src="https://img.shields.io/badge/No_Upload_Limits-00ADD8?style=for-the-badge&logo=gnu-bash&logoColor=white" alt="No Limits">
   <br>
-  <img src="https://img.shields.io/github/stars/abhinayy/statlab-cli?style=social" alt="Stars">
+  <img src="https://img.shields.io/github/stars/abhinay-sambherao/statlab-cli?style=social" alt="Stars">
 </p>
 
 <div align="center">
@@ -24,13 +24,13 @@
 
 The web is great for small files. But when your dataset hits 500 MB, 1 GB, or more — uploading through a browser is impractical.
 
-**StatLab CLI** gives you the same statistical engine used by [StatLab AI](https://github.com/abhinayy/statlab-ai) as a standalone command-line tool. Process files of any size, pipe JSON output into other tools, and automate analyses in scripts and CI/CD pipelines.
+**StatLab CLI** gives you the same statistical engine used by [StatLab AI](https://github.com/abhinay-sambherao/statlab-app) as a standalone command-line tool. Process files of any size, pipe JSON output into other tools, and automate analyses in scripts and CI/CD pipelines.
 
 ## Quick Start
 
 ```bash
 # Clone
-git clone https://github.com/abhinayy/statlab-cli.git
+git clone https://github.com/abhinay-sambherao/statlab-cli.git
 cd statlab-cli
 
 # Install
